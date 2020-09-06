@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TODO: Implement results: the parameters from mining-select has to be copied over to the bulk/liquid sub-sections, otherwise the parameters are lost, ie, lost references
+-->
+<diff>
+	<!-- Resetting this; just in case if someone left the menu using 'Delete' key, and the value cannot get reset. -->
+	<add sel="//do_elseif[@value=&quot;event.param == 'gOrders_mining_zone'&quot;]" pos="prepend">
+		<!-- Reset this mess -->
+		<set_value name="static.$vectorial1024_lmrs_miningselection_zoneselected" exact="null"/>
+	</add>
+	
+	<!-- Didn't realize we need something out of the if-block. -->
+	<add sel="(//set_value[@name='$canmine'])[1]" pos="before">
+		<!-- Receiving packet override instructions -->
+		<!-- Null-checking; this is standard issue. -->
+		<do_if value="static.$vectorial1024_lmrs_miningselection_zoneselected != null">
+			<!-- Read the packet -->
+			<set_value name="$wares" exact="static.$vectorial1024_lmrs_miningselection_zoneselected.yield"/>
+		</do_if>
+	</add>
+	
+	<!-- Replacing the entire if-block is the most straightforward and intuitive. -->
+	<replace sel="//do_if[@value='$canmine']">
+		<do_if value="$canmine">
+			<!-- Setting initial value for easy handling and easy reading -->
+			<set_value name="$targetZone" exact="event.param2.{3}"/>
+			<set_value name="$targetShip" exact="event.object.ship"/>
+			<set_value name="$voiceControl_YishaShouldSpeak" exact="true"/>
+			
+			<!-- Receiving packet override instructions -->
+			<!-- Null-checking; this is standard issue. -->
+			<do_if value="static.$vectorial1024_lmrs_miningselection_zoneselected != null">
+				<set_value name="$targetZone" exact="static.$vectorial1024_lmrs_miningselection_zoneselected"/>
+				<set_value name="$voiceControl_YishaShouldSpeak" exact="false"/>
+			</do_if>
+			
+			<do_if value="$voiceControl_YishaShouldSpeak">
+				<add_npc_line speaker="player.copilot" line="14002" comment="Select the resource you want to gather."/>
+			</do_if>			
+			<add_player_choice_return text="{1002,20}" position="bottom_right" comment="Back" returnparam="'gOrders_main'"/>
+			
+			<!-- The policy is to rely on vanilla whenever possible and practical. -->
+			<do_if value="$wares.count le 5">
+				<!-- Vanilla BEGIN -->
+				<do_all exact="$wares.count" counter="$i">
+					<add_player_choice_sub text="$wares.{$i}.name" section="gOrders_mining_start" choiceparam="[$wares.{$i}, $targetZone]" selectable="$targetShip.units.collect.{$wares.{$i}}.count and $targetShip.cargo.{$wares.{$i}}.max" />
+				</do_all>
+				<!-- Vanilla END -->
+			</do_if>
+			<do_else>
+				<!-- Dammit, they do not have inplicit casting here; Adding gt 0 -->
+				<set_value name="$shipHasBulkStorage" exact="$targetShip.waretransport.indexof.{ware.ore.waretransport} gt 0"/>
+				<set_value name="$shipHasLiquidStorage" exact="$targetShip.waretransport.indexof.{ware.hydrogen.waretransport} gt 0"/>
+				
+				<!-- Check that the ship can carry either Bulk or Liquid -->
+				<do_if value="$shipHasBulkStorage != $shipHasLiquidStorage">
+					<!-- Reusing the old code; it works anyway. -->
+					<set_value name="$possibleYields" exact="[]"/>
+					<set_value name="$impossibleYields" exact="[]"/>
+					
+					<!-- Filter out the yields that are possible with the given ship. -->
+					<do_all exact="$wares.count" counter="$i">
+						<do_if value="event.object.ship.waretransport.indexof.{$wares.{$i}.waretransport}">
+							<append_to_list name="$possibleYields" exact="$wares.{$i}"/>
+						</do_if>
+						<do_else>
+							<append_to_list name="$impossibleYields" exact="$wares.{$i}"/>
+						</do_else>
+					</do_all>
+
+					<!-- We now have separated the yields by considering "the possibility". -->
+					<!-- Show the options to the player. -->
+					<!-- I am confident that overflowing player choices are simply not shown. -->
+					<!-- I do not have the luxury of time and patience to test scope safety, so Imma use "int j" here. -->
+					<do_all exact="$possibleYields.count" counter="$j">
+						<add_player_choice_sub text="$possibleYields.{$j}.name" section="gOrders_mining_start" choiceparam="[$possibleYields.{$j}, $targetZone]" selectable="$targetShip.units.collect.{$possibleYields.{$j}}.count and $targetShip.cargo.{$possibleYields.{$j}}.max"/>
+					</do_all>
+					<!-- Similarly, Imma use "int k" here. -->
+					<do_all exact="$impossibleYields.count" counter="$k">
+						<add_player_choice_sub text="$impossibleYields.{$k}.name" section="gOrders_mining_start" choiceparam="[$impossibleYields.{$k}, $targetZone]" selectable="false"/>
+					</do_all>
+				</do_if>
+				<do_else>
+					<!-- Parameter required for the new menu to work: Zone, Ware Type (Bulk or Liquid) -->
+					<add_player_choice_sub text="{1001,41} + ' (' + {20205,200} + ')'" position="top_left" section="gOrders_MiningSelect_Additional" choiceparam="[$targetZone, ware.ore.waretransport]" selectable="true" />
+					<add_player_choice_sub text="{1001,41} + ' (' + {20205,300} + ')'" position="bottom_left" section="gOrders_MiningSelect_Additional" choiceparam="[$targetZone, ware.hydrogen.waretransport]" selectable="true" />
+				</do_else>
+			</do_else>
+		</do_if>
+	</replace>
+	
+	<add sel="/mdscript/cues/cue[@name='SectionHandler']/actions">
+		<do_elseif value="event.param == 'gOrders_MiningSelect_Additional'">
+			<set_value name="$zone" exact="event.param2.{1}"/>
+			<set_value name="$yields" exact="$zone.yield"/>
+			<set_value name="$yieldtype" exact="event.param2.{2}"/>
+			
+			<!-- We have arrived at our destination. Preparing return data packet now. -->
+			<!-- The thing is that we cannot put in additional params in the returnparam here, so we need alternatives. -->
+			<set_value name="static.$vectorial1024_lmrs_miningselection_zoneselected" exact="$zone"/>
+			<add_player_choice_return text="{1002,20}" position="bottom_right" comment="Back" returnparam="gOrders_mining_select"/>
+			
+			<do_all exact="$yields.count" counter="$i">
+				<do_if value="$yields.{$i}.waretransport == $yieldtype">
+					<add_player_choice_sub text="$yields.{$i}.name" section="gOrders_mining_start" choiceparam="[$yields.{$i}, $zone]" selectable="event.object.ship.units.collect.{$yields.{$i}}.count and event.object.ship.cargo.{$yields.{$i}}.max"/>
+				</do_if>
+			</do_all>
+		</do_elseif>
+	</add>
+	
+	<add sel="//do_elseif[@value=&quot;event.param == 'gOrders_mining_start'&quot;]/do_else[2]" pos="prepend">
+		<!-- Reset this mess -->
+		<set_value name="static.$vectorial1024_lmrs_miningselection_zoneselected" exact="null"/>
+	</add>
+</diff>
